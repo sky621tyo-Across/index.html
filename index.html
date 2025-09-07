@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ja">
+<html lang="ja">\>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -25,15 +25,36 @@
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
     .help { background: #f1f5f9; border-radius: 12px; padding: 12px; font-size: 13px; }
     footer { max-width: var(--max); margin: 20px auto 60px; padding: 0 16px; color: #6b7280; font-size: 12px; }
+    /* 検索候補 */
+    .results { position: relative; }
+    .results ul { list-style: none; margin: 6px 0 0; padding: 0; background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; box-shadow: 0 10px 24px rgba(0,0,0,.08); overflow: hidden; }
+    .results li { padding: 10px 12px; cursor: pointer; }
+    .results li:hover { background: #f8fafc; }
+    .nores { color: #6b7280; font-size: 12px; margin-top: 6px; }
+    details { margin-top: 8px; }
   </style>
 </head>
 <body>
   <header>
-    <h1>Calendar URL Generator（Google / Apple / Outlook 対応・静的サイト）</h1>
+    <h1>Calendar URL Generator（Google / Apple / Outlook 対応・場所検索つき）</h1>
   </header>
   <main>
     <section class="card">
       <div class="grid grid-2">
+        <div class="grid" style="grid-column:1 / -1;">
+          <label for="placeSearch">場所検索（無料API）</label>
+          <input id="placeSearch" type="text" placeholder="例）渋谷ヒカリエ / 台北101 / 東京国立近代美術館" />
+          <div id="placeResults" class="results"></div>
+          <div class="muted">候補から選ぶと「会場名」「住所」に自動入力します。精度は地名により差があります。</div>
+          <details>
+            <summary>高度な設定：Google Placesで補完（APIキー任意）</summary>
+            <div class="row" style="margin-top:8px;">
+              <input id="gApiKey" type="text" placeholder="Google Places APIキー（リファラー制限推奨）" />
+              <button id="loadPlaces" class="btn secondary">有効化</button>
+            </div>
+            <div class="muted" style="margin-top:6px;">注意：静的サイトではキーが公開されます。必ず“HTTP リファラー制限（自サイトのドメイン）”を設定してください。Googleは課金が必要です。</div>
+          </details>
+        </div>
         <div>
           <label for="title">タイトル</label>
           <input id="title" type="text" required placeholder="例）写真展『街の断片』" />
@@ -90,8 +111,8 @@
       </div>
       <p class="help" style="margin-top:16px;">
         ・Google: 時刻ありはUTC（Z）で生成。終日は終了日を+1日で渡します（Googleの仕様）。<br>
-        ・Apple/Outlook: <code>.ics</code> を保存して開くと追加できます（iPhoneはSafariで開くか、ファイル保存→カレンダーで開く）。<br>
-        ・OutlookのWeb: 公式のディープリンクを使用。予定作成画面が開きます。
+        ・Apple/Outlook: <code>.ics</code> を保存して開くと追加できます（iPhoneはSafariで開くか、Filesに保存→カレンダーで開く）。<br>
+        ・OutlookのWeb: 公式のディープリンクで予定作成画面を開きます。
       </p>
     </section>
   </main>
@@ -263,6 +284,74 @@
     icsBtn.addEventListener('click', ()=>{ downloadICS(); });
     olLiveBtn.addEventListener('click', ()=>{ const u = buildOutlookUrl('outlook.live.com'); if(u) window.open(u, '_blank'); });
     olM365Btn.addEventListener('click', ()=>{ const u = buildOutlookUrl('outlook.office.com'); if(u) window.open(u, '_blank'); });
+
+    // ====== 場所検索（デフォルト：OpenStreetMap Nominatim） ======
+    const searchInput = document.getElementById('placeSearch');
+    const resultsBox = document.getElementById('placeResults');
+
+    const debounce = (fn, d=400)=>{ let t; return (...args)=>{ clearTimeout(t); t=setTimeout(()=>fn(...args), d); }; };
+
+    async function queryOSM(q){
+      const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&addressdetails=1&accept-language=ja&q=${encodeURIComponent(q)}`;
+      const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+      if(!res.ok) throw new Error('OSM error');
+      return res.json();
+    }
+
+    function renderResults(items){
+      if(!items || items.length===0){ resultsBox.innerHTML = '<div class="nores">候補が見つかりません</div>'; return; }
+      const ul = document.createElement('ul');
+      items.forEach(it=>{
+        const primary = (it.name || (it.display_name||'').split(',')[0] || '').trim();
+        const full = it.display_name || primary;
+        const li = document.createElement('li');
+        li.innerHTML = `<div><strong>${primary}</strong></div><div class="muted">${full}</div>`;
+        li.addEventListener('click', ()=>{
+          document.getElementById('venue').value = primary;
+          document.getElementById('address').value = full;
+          resultsBox.innerHTML = '';
+        });
+        ul.appendChild(li);
+      });
+      resultsBox.innerHTML='';
+      resultsBox.appendChild(ul);
+    }
+
+    searchInput.addEventListener('input', debounce(async (e)=>{
+      const q = e.target.value.trim();
+      if(q.length < 2){ resultsBox.innerHTML=''; return; }
+      try{ const data = await queryOSM(q); renderResults(data); }
+      catch(err){ resultsBox.innerHTML = '<div class="nores">検索エラー</div>'; }
+    }));
+
+    // ====== 任意：Google Places Autocomplete（APIキー入力で有効化） ======
+    const loadBtn = document.getElementById('loadPlaces');
+    if(loadBtn){
+      loadBtn.addEventListener('click', ()=>{
+        const key = document.getElementById('gApiKey').value.trim();
+        if(!key){ alert('APIキーを入力してください'); return; }
+        const s = document.createElement('script');
+        window.initPlaces = ()=>{
+          try{
+            const ac = new google.maps.places.Autocomplete(
+              document.getElementById('placeSearch'),
+              { fields: ['name','formatted_address','address_components','geometry'], componentRestrictions: { country: ['jp','tw'] } }
+            );
+            ac.addListener('place_changed', ()=>{
+              const p = ac.getPlace();
+              const name = p.name || (p.formatted_address ? p.formatted_address.split(',')[0] : '');
+              document.getElementById('venue').value = name || '';
+              document.getElementById('address').value = p.formatted_address || name;
+              resultsBox.innerHTML = '';
+            });
+            loadBtn.textContent = '有効化済み';
+            loadBtn.disabled = true;
+          }catch(e){ alert('Placesの初期化に失敗しました'); }
+        };
+        s.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&libraries=places&language=ja&region=JP&callback=initPlaces`;
+        document.head.appendChild(s);
+      });
+    }
 
     // 入力の度にプレビュー更新
     document.querySelectorAll('input, textarea').forEach(el=>{
