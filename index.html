@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Calendar URL Generator（サンプル）</title>
+  <style>
+    :root { --max: 820px; }
+    body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans JP", sans-serif; line-height: 1.6; margin: 0; background: #f7f7f8; }
+    header { background: #0f172a; color: #fff; padding: 24px 16px; }
+    header h1 { margin: 0; font-size: 20px; }
+    main { max-width: var(--max); margin: 24px auto; padding: 0 16px; }
+    .card { background: #fff; border-radius: 16px; box-shadow: 0 6px 24px rgba(0,0,0,.06); padding: 20px; }
+    .grid { display: grid; grid-template-columns: 1fr; gap: 14px; }
+    @media (min-width: 720px){ .grid-2 { grid-template-columns: 1fr 1fr; } }
+    label { display: block; font-weight: 600; font-size: 14px; margin-bottom: 6px; }
+    input[type="text"], input[type="date"], input[type="time"], input[type="url"], textarea { width: 100%; padding: 10px 12px; border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; font-size: 14px; box-sizing: border-box; }
+    textarea { min-height: 96px; resize: vertical; }
+    .row { display: flex; gap: 12px; align-items: center; }
+    .muted { color: #6b7280; font-size: 12px; }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    button, .btn { cursor: pointer; border: 0; padding: 10px 14px; border-radius: 10px; background: #111827; color: #fff; font-weight: 600; }
+    .btn.secondary { background: #e5e7eb; color: #111827; }
+    .output { display: grid; gap: 8px; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    .help { background: #f1f5f9; border-radius: 12px; padding: 12px; font-size: 13px; }
+    footer { max-width: var(--max); margin: 20px auto 60px; padding: 0 16px; color: #6b7280; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Calendar URL Generator（Googleカレンダー用・静的サイト）</h1>
+  </header>
+  <main>
+    <section class="card">
+      <div class="grid grid-2">
+        <div>
+          <label for="title">展示タイトル</label>
+          <input id="title" type="text" required placeholder="例）写真展『街の断片』" />
+        </div>
+        <div>
+          <label for="venue">会場名</label>
+          <input id="venue" type="text" placeholder="例）○○ギャラリー" />
+        </div>
+        <div>
+          <label for="startDate">開始日</label>
+          <input id="startDate" type="date" required />
+        </div>
+        <div>
+          <label for="endDate">終了日</label>
+          <input id="endDate" type="date" required />
+        </div>
+        <div class="row">
+          <input id="allday" type="checkbox" />
+          <label for="allday" style="margin:0;">終日イベント</label>
+        </div>
+        <div></div>
+        <div>
+          <label for="startTime">開始時間 <span class="muted">（終日でない場合）</span></label>
+          <input id="startTime" type="time" />
+        </div>
+        <div>
+          <label for="endTime">終了時間 <span class="muted">（終日でない場合）</span></label>
+          <input id="endTime" type="time" />
+        </div>
+        <div>
+          <label for="address">住所</label>
+          <input id="address" type="text" placeholder="例）東京都○○区…" />
+        </div>
+        <div>
+          <label for="url">告知URL</label>
+          <input id="url" type="url" placeholder="https://example.com" />
+        </div>
+        <div class="grid" style="grid-column:1 / -1;">
+          <label for="memo">詳細・メモ</label>
+          <textarea id="memo" placeholder="営業時間や休館日、備考など"></textarea>
+        </div>
+      </div>
+      <div class="actions" style="margin-top:16px;">
+        <button id="genBtn">カレンダーURL生成</button>
+        <button id="openBtn" class="btn secondary" disabled>新しいタブで開く</button>
+        <button id="copyBtn" class="btn secondary" disabled>URLをコピー</button>
+      </div>
+      <div class="output" style="margin-top:16px;">
+        <label for="out">Googleカレンダー登録URL</label>
+        <input id="out" class="mono" type="text" readonly placeholder="ここにURLが表示されます" />
+      </div>
+      <p class="help" style="margin-top:16px;">注：終日イベントの「終了日」は仕様により翌日未明で扱われるため、Googleのリンクでは終了日に+1日して渡します（表示上は意図どおりの日付になります）。<br>時刻ありイベントはUTC（Z）で生成しています。</p>
+    </section>
+  </main>
+  <footer>
+    © 2025 Calendar URL Generator Sample
+  </footer>
+
+  <script>
+    function zpad(n){ return String(n).padStart(2, '0'); }
+
+    function formatAllDayDates(startDateStr, endDateStr){
+      const s = new Date(startDateStr + 'T00:00:00');
+      const e = new Date(endDateStr + 'T00:00:00');
+      // GoogleのURLは終日イベントの終了日を「翌日（排他的）」で渡す必要がある
+      const ePlus = new Date(e.getTime() + 24*60*60*1000);
+      const ymd = d => d.getFullYear() + zpad(d.getMonth()+1) + zpad(d.getDate());
+      return ymd(s) + '/' + ymd(ePlus);
+    }
+
+    function formatTimedDates(startDateStr, startTimeStr, endDateStr, endTimeStr){
+      const start = new Date(startDateStr + 'T' + startTimeStr);
+      const end   = new Date(endDateStr + 'T' + endTimeStr);
+      const iso = d => d.toISOString().replace(/[-:]|\.\d{3}/g, '').slice(0,15) + 'Z';
+      return iso(start) + '/' + iso(end);
+    }
+
+    function enc(v){ return encodeURIComponent(v || ''); }
+
+    function buildUrl(){
+      const title   = document.getElementById('title').value.trim();
+      const venue   = document.getElementById('venue').value.trim();
+      const startD  = document.getElementById('startDate').value;
+      const endD    = document.getElementById('endDate').value;
+      const allday  = document.getElementById('allday').checked;
+      const startT  = document.getElementById('startTime').value;
+      const endT    = document.getElementById('endTime').value;
+      const address = document.getElementById('address').value.trim();
+      const url     = document.getElementById('url').value.trim();
+      const memo    = document.getElementById('memo').value.trim();
+
+      if(!title || !startD || !endD){
+        return '';
+      }
+
+      let dates = '';
+      if(allday){
+        dates = formatAllDayDates(startD, endD);
+      } else {
+        if(!startT || !endT){ return ''; }
+        dates = formatTimedDates(startD, startT, endD, endT);
+      }
+
+      const base = 'https://calendar.google.com/calendar/render?action=TEMPLATE';
+      const loc = [venue, address].filter(Boolean).join(' ');
+      const detailsParts = [];
+      if(memo) detailsParts.push(memo);
+      if(url)  detailsParts.push('詳細: ' + url);
+      const details = detailsParts.join('\n');
+
+      const finalUrl = `${base}&text=${enc(title)}&dates=${enc(dates)}&location=${enc(loc)}&details=${enc(details)}&trp=false`;
+      return finalUrl;
+    }
+
+    const out = document.getElementById('out');
+    const genBtn = document.getElementById('genBtn');
+    const openBtn = document.getElementById('openBtn');
+    const copyBtn = document.getElementById('copyBtn');
+
+    function update(){
+      const u = buildUrl();
+      out.value = u;
+      const enabled = !!u;
+      openBtn.disabled = !enabled;
+      copyBtn.disabled = !enabled;
+    }
+
+    genBtn.addEventListener('click', (e)=>{ e.preventDefault(); update(); });
+    openBtn.addEventListener('click', ()=>{ const u = out.value; if(u) window.open(u, '_blank'); });
+    copyBtn.addEventListener('click', async ()=>{
+      const u = out.value; if(!u) return;
+      try { await navigator.clipboard.writeText(u); copyBtn.textContent = 'コピーしました'; setTimeout(()=>copyBtn.textContent='URLをコピー', 1600); }
+      catch(_) { out.select(); document.execCommand('copy'); }
+    });
+
+    // 入力の度にプレビュー更新（任意）
+    document.querySelectorAll('input, textarea').forEach(el=>{
+      el.addEventListener('input', ()=>{ if(el.id !== 'startTime' && el.id !== 'endTime') update(); });
+    });
+  </script>
+</body>
+</html>
