@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Calendar URL Generator（サンプル）</title>
+  <title>Calendar URL Generator（Google / Apple / Outlook 対応）</title>
   <style>
-    :root { --max: 820px; }
+    :root { --max: 860px; }
     body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans JP", sans-serif; line-height: 1.6; margin: 0; background: #f7f7f8; }
     header { background: #0f172a; color: #fff; padding: 24px 16px; }
     header h1 { margin: 0; font-size: 20px; }
@@ -29,13 +29,13 @@
 </head>
 <body>
   <header>
-    <h1>Calendar URL Generator（Googleカレンダー用・静的サイト）</h1>
+    <h1>Calendar URL Generator（Google / Apple / Outlook 対応・静的サイト）</h1>
   </header>
   <main>
     <section class="card">
       <div class="grid grid-2">
         <div>
-          <label for="title">展示タイトル</label>
+          <label for="title">タイトル</label>
           <input id="title" type="text" required placeholder="例）写真展『街の断片』" />
         </div>
         <div>
@@ -77,15 +77,22 @@
         </div>
       </div>
       <div class="actions" style="margin-top:16px;">
-        <button id="genBtn">カレンダーURL生成</button>
-        <button id="openBtn" class="btn secondary" disabled>新しいタブで開く</button>
+        <button id="genBtn">GoogleカレンダーURL</button>
+        <button id="openBtn" class="btn secondary" disabled>Googleで開く</button>
         <button id="copyBtn" class="btn secondary" disabled>URLをコピー</button>
+        <button id="icsBtn" class="btn secondary" disabled>Apple/Outlook（.ics保存）</button>
+        <button id="olLiveBtn" class="btn secondary" disabled>Outlook.comで開く</button>
+        <button id="olM365Btn" class="btn secondary" disabled>Microsoft 365で開く</button>
       </div>
       <div class="output" style="margin-top:16px;">
         <label for="out">Googleカレンダー登録URL</label>
         <input id="out" class="mono" type="text" readonly placeholder="ここにURLが表示されます" />
       </div>
-      <p class="help" style="margin-top:16px;">注：終日イベントの「終了日」は仕様により翌日未明で扱われるため、Googleのリンクでは終了日に+1日して渡します（表示上は意図どおりの日付になります）。<br>時刻ありイベントはUTC（Z）で生成しています。</p>
+      <p class="help" style="margin-top:16px;">
+        ・Google: 時刻ありはUTC（Z）で生成。終日は終了日を+1日で渡します（Googleの仕様）。<br>
+        ・Apple/Outlook: <code>.ics</code> を保存して開くと追加できます（iPhoneはSafariで開くか、ファイル保存→カレンダーで開く）。<br>
+        ・OutlookのWeb: 公式のディープリンクを使用。予定作成画面が開きます。
+      </p>
     </section>
   </main>
   <footer>
@@ -98,22 +105,45 @@
     function formatAllDayDates(startDateStr, endDateStr){
       const s = new Date(startDateStr + 'T00:00:00');
       const e = new Date(endDateStr + 'T00:00:00');
-      // GoogleのURLは終日イベントの終了日を「翌日（排他的）」で渡す必要がある
       const ePlus = new Date(e.getTime() + 24*60*60*1000);
       const ymd = d => d.getFullYear() + zpad(d.getMonth()+1) + zpad(d.getDate());
-      return ymd(s) + '/' + ymd(ePlus);
+      return { google: ymd(s) + '/' + ymd(ePlus), ics: { dtstart: ymd(s), dtend: ymd(ePlus) } };
     }
 
     function formatTimedDates(startDateStr, startTimeStr, endDateStr, endTimeStr){
       const start = new Date(startDateStr + 'T' + startTimeStr);
       const end   = new Date(endDateStr + 'T' + endTimeStr);
       const iso = d => d.toISOString().replace(/[-:]|\.\d{3}/g, '').slice(0,15) + 'Z';
-      return iso(start) + '/' + iso(end);
+      const isoOutlook = d => d.toISOString().slice(0,19) + 'Z';
+      return { google: iso(start) + '/' + iso(end), ics: { dtstart: iso(start), dtend: iso(end) }, outlook: { start: isoOutlook(start), end: isoOutlook(end) } };
     }
 
     function enc(v){ return encodeURIComponent(v || ''); }
 
-    function buildUrl(){
+    function buildGoogleUrl(){
+      const fields = readFields();
+      if(!fields.valid) return '';
+      const { title, venue, address, url, memo, allday, startD, endD, startT, endT } = fields;
+
+      let dates = '';
+      if(allday){
+        dates = formatAllDayDates(startD, endD).google;
+      } else {
+        if(!startT || !endT) return '';
+        dates = formatTimedDates(startD, startT, endD, endT).google;
+      }
+
+      const base = 'https://calendar.google.com/calendar/render?action=TEMPLATE';
+      const loc = [venue, address].filter(Boolean).join(' ');
+      const detailsParts = [];
+      if(memo) detailsParts.push(memo);
+      if(url)  detailsParts.push('詳細: ' + url);
+      const details = detailsParts.join('\n');
+
+      return `${base}&text=${enc(title)}&dates=${enc(dates)}&location=${enc(loc)}&details=${enc(details)}&trp=false`;
+    }
+
+    function readFields(){
       const title   = document.getElementById('title').value.trim();
       const venue   = document.getElementById('venue').value.trim();
       const startD  = document.getElementById('startDate').value;
@@ -125,40 +155,101 @@
       const url     = document.getElementById('url').value.trim();
       const memo    = document.getElementById('memo').value.trim();
 
-      if(!title || !startD || !endD){
-        return '';
-      }
+      const valid = !!(title && startD && endD && (allday || (startT && endT)) );
+      return { valid, title, venue, startD, endD, allday, startT, endT, address, url, memo };
+    }
 
-      let dates = '';
+    function buildICS(){
+      const { valid, title, venue, startD, endD, allday, startT, endT, address, url, memo } = readFields();
+      if(!valid) return '';
+
+      let dtstart = '', dtend = '';
       if(allday){
-        dates = formatAllDayDates(startD, endD);
+        const a = formatAllDayDates(startD, endD).ics;
+        dtstart = `DTSTART;VALUE=DATE:${a.dtstart}`;
+        dtend   = `DTEND;VALUE=DATE:${a.dtend}`;
       } else {
-        if(!startT || !endT){ return ''; }
-        dates = formatTimedDates(startD, startT, endD, endT);
+        const t = formatTimedDates(startD, startT, endD, endT).ics;
+        dtstart = `DTSTART:${t.dtstart}`;
+        dtend   = `DTEND:${t.dtend}`;
       }
 
-      const base = 'https://calendar.google.com/calendar/render?action=TEMPLATE';
+      const uid = 'event-' + Date.now() + '@calendar-gen';
+      const now = new Date().toISOString().replace(/[-:]|\.\d{3}/g, '').slice(0,15) + 'Z';
       const loc = [venue, address].filter(Boolean).join(' ');
-      const detailsParts = [];
-      if(memo) detailsParts.push(memo);
-      if(url)  detailsParts.push('詳細: ' + url);
-      const details = detailsParts.join('\n');
+      const descParts = [];
+      if(memo) descParts.push(memo);
+      if(url)  descParts.push('詳細: ' + url);
+      const desc = descParts.join('\\n');
 
-      const finalUrl = `${base}&text=${enc(title)}&dates=${enc(dates)}&location=${enc(loc)}&details=${enc(details)}&trp=false`;
-      return finalUrl;
+      const ics = [
+        'BEGIN:VCALENDAR',
+        'VERSION:2.0',
+        'PRODID:-//calendar-url-gen//JP//',
+        'CALSCALE:GREGORIAN',
+        'METHOD:PUBLISH',
+        'BEGIN:VEVENT',
+        `UID:${uid}`,
+        `DTSTAMP:${now}`,
+        `SUMMARY:${title.replace(/\r?\n/g,' ')}`,
+        `${dtstart}`,
+        `${dtend}`,
+        loc ? `LOCATION:${loc.replace(/,/g,'\\,').replace(/;/g,'\\;')}` : '',
+        desc ? `DESCRIPTION:${desc.replace(/,/g,'\\,').replace(/;/g,'\\;')}` : '',
+        url ? `URL:${url}` : '',
+        'END:VEVENT',
+        'END:VCALENDAR'
+      ].filter(Boolean).join('\r\n');
+      return ics;
+    }
+
+    function downloadICS(){
+      const ics = buildICS();
+      if(!ics) return;
+      const blob = new Blob([ics], { type: 'text/calendar;charset=utf-8' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'event.ics';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+    }
+
+    function buildOutlookUrl(domain){
+      const f = readFields();
+      if(!f.valid) return '';
+      const { title, venue, address, url, memo, allday, startD, endD, startT, endT } = f;
+      const base = `https://${domain}/calendar/deeplink/compose?path=/calendar/action/compose&rru=addevent`;
+      const loc = [venue, address].filter(Boolean).join(' ');
+      const body = [memo, url ? ('詳細: ' + url) : ''].filter(Boolean).join('\n');
+
+      let qs = `&subject=${enc(title)}&location=${enc(loc)}&body=${enc(body)}`;
+      if(allday){
+        qs += `&allday=true&startdt=${startD}&enddt=${endD}`; // all-day: YYYY-MM-DD
+      } else {
+        const t = formatTimedDates(startD, startT, endD, endT).outlook; // YYYY-MM-DDTHH:mm:SSZ
+        qs += `&startdt=${enc(t.start)}&enddt=${enc(t.end)}`;
+      }
+      return base + qs;
     }
 
     const out = document.getElementById('out');
     const genBtn = document.getElementById('genBtn');
     const openBtn = document.getElementById('openBtn');
     const copyBtn = document.getElementById('copyBtn');
+    const icsBtn = document.getElementById('icsBtn');
+    const olLiveBtn = document.getElementById('olLiveBtn');
+    const olM365Btn = document.getElementById('olM365Btn');
 
     function update(){
-      const u = buildUrl();
+      const u = buildGoogleUrl();
+      const valid = !!u;
       out.value = u;
-      const enabled = !!u;
-      openBtn.disabled = !enabled;
-      copyBtn.disabled = !enabled;
+      openBtn.disabled = !valid;
+      copyBtn.disabled = !valid;
+      icsBtn.disabled = !valid;
+      olLiveBtn.disabled = !valid;
+      olM365Btn.disabled = !valid;
     }
 
     genBtn.addEventListener('click', (e)=>{ e.preventDefault(); update(); });
@@ -169,7 +260,11 @@
       catch(_) { out.select(); document.execCommand('copy'); }
     });
 
-    // 入力の度にプレビュー更新（任意）
+    icsBtn.addEventListener('click', ()=>{ downloadICS(); });
+    olLiveBtn.addEventListener('click', ()=>{ const u = buildOutlookUrl('outlook.live.com'); if(u) window.open(u, '_blank'); });
+    olM365Btn.addEventListener('click', ()=>{ const u = buildOutlookUrl('outlook.office.com'); if(u) window.open(u, '_blank'); });
+
+    // 入力の度にプレビュー更新
     document.querySelectorAll('input, textarea').forEach(el=>{
       el.addEventListener('input', ()=>{ if(el.id !== 'startTime' && el.id !== 'endTime') update(); });
     });
